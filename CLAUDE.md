@@ -1,3 +1,7 @@
+## Communication Rules
+
+- Always answer in Chinese, even if the user speaks in other languages.
+
 # IronClaw Development Guide
 
 **IronClaw** is a secure personal AI assistant — user-first security, self-expanding tools, defense in depth, multi-channel access with proactive background execution.

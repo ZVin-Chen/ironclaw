@@ -40,3 +40,6 @@ __pycache__/
 *.pyo
 *.pyd
 engine_trace_*.json
+
+# Git worktrees (superpowers workflow)
+.worktrees/
