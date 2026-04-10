@@ -4,8 +4,6 @@
 
 use std::time::Duration;
 
-use wasmtime::ResourceLimiter;
-
 /// Default memory limit: 10 MB (conservative for untrusted code).
 pub const DEFAULT_MEMORY_LIMIT: u64 = 10 * 1024 * 1024;
 
@@ -59,6 +57,7 @@ impl ResourceLimits {
 /// Wasmtime ResourceLimiter implementation for enforcing memory limits.
 ///
 /// This is attached to the Store to limit memory growth during execution.
+#[cfg(feature = "wasm-sandbox")]
 #[derive(Debug)]
 pub struct WasmResourceLimiter {
     /// Maximum memory allowed.
@@ -71,6 +70,7 @@ pub struct WasmResourceLimiter {
     max_instances: u32,
 }
 
+#[cfg(feature = "wasm-sandbox")]
 impl WasmResourceLimiter {
     /// Create a new limiter with the given memory limit.
     ///
@@ -96,7 +96,8 @@ impl WasmResourceLimiter {
     }
 }
 
-impl ResourceLimiter for WasmResourceLimiter {
+#[cfg(feature = "wasm-sandbox")]
+impl wasmtime::ResourceLimiter for WasmResourceLimiter {
     fn memory_growing(
         &mut self,
         current: usize,
@@ -195,11 +196,11 @@ impl FuelConfig {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "wasm-sandbox")]
+    use crate::tools::wasm::limits::WasmResourceLimiter;
     use crate::tools::wasm::limits::{
         DEFAULT_FUEL_LIMIT, DEFAULT_MEMORY_LIMIT, DEFAULT_TIMEOUT, FuelConfig, ResourceLimits,
-        WasmResourceLimiter,
     };
-    use wasmtime::ResourceLimiter;
 
     #[test]
     fn test_default_limits() {
@@ -221,8 +222,10 @@ mod tests {
         assert_eq!(limits.timeout, std::time::Duration::from_secs(30));
     }
 
+    #[cfg(feature = "wasm-sandbox")]
     #[test]
     fn test_resource_limiter_allows_growth_within_limit() {
+        use wasmtime::ResourceLimiter;
         let mut limiter = WasmResourceLimiter::new(10 * 1024 * 1024);
 
         // Growth within limit should be allowed
@@ -231,8 +234,10 @@ mod tests {
         assert_eq!(limiter.memory_used(), 1024 * 1024);
     }
 
+    #[cfg(feature = "wasm-sandbox")]
     #[test]
     fn test_resource_limiter_denies_growth_beyond_limit() {
+        use wasmtime::ResourceLimiter;
         let mut limiter = WasmResourceLimiter::new(10 * 1024 * 1024);
 
         // Growth beyond limit should be denied

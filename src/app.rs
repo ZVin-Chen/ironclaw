@@ -445,11 +445,11 @@ impl AppBuilder {
         &self,
         tools: &Arc<ToolRegistry>,
         hooks: &Arc<HookRegistry>,
+        wasm_tool_runtime: &Option<Arc<WasmToolRuntime>>,
     ) -> Result<
         (
             Arc<McpSessionManager>,
             Arc<McpProcessManager>,
-            Option<Arc<WasmToolRuntime>>,
             Option<Arc<ExtensionManager>>,
             Vec<crate::extensions::RegistryEntry>,
             Vec<String>,
@@ -457,25 +457,14 @@ impl AppBuilder {
         anyhow::Error,
     > {
         use crate::tools::mcp::config::load_mcp_servers_from_db;
-        use crate::tools::wasm::{WasmToolLoader, load_dev_tools};
 
         let mcp_session_manager = Arc::new(McpSessionManager::new());
         let mcp_process_manager = Arc::new(McpProcessManager::new());
 
-        // Create WASM tool runtime eagerly so extensions installed after startup
-        // (e.g. via the web UI) can still be activated. The tools directory is only
-        // needed when loading modules, not for engine initialisation.
-        let wasm_tool_runtime: Option<Arc<WasmToolRuntime>> = if self.config.wasm.enabled {
-            WasmToolRuntime::new(self.config.wasm.to_runtime_config())
-                .map(Arc::new)
-                .map_err(|e| tracing::warn!("Failed to initialize WASM runtime: {}", e))
-                .ok()
-        } else {
-            None
-        };
-
         // Load WASM tools and MCP servers concurrently
+        #[cfg(feature = "wasm-sandbox")]
         let wasm_tools_future = {
+            use crate::tools::wasm::{WasmToolLoader, load_dev_tools};
             let wasm_tool_runtime = wasm_tool_runtime.clone();
             let secrets_store = self.secrets_store.clone();
             let tools = Arc::clone(tools);
@@ -530,6 +519,8 @@ impl AppBuilder {
                 dev_loaded_tool_names
             }
         };
+        #[cfg(not(feature = "wasm-sandbox"))]
+        let wasm_tools_future = async { Vec::<String>::new() };
 
         let mcp_servers_future = {
             let secrets_store = self.secrets_store.clone();
@@ -762,7 +753,6 @@ impl AppBuilder {
         Ok((
             mcp_session_manager,
             mcp_process_manager,
-            wasm_tool_runtime,
             extension_manager,
             catalog_entries,
             dev_loaded_tool_names,
@@ -801,14 +791,28 @@ impl AppBuilder {
         let agent_session_manager =
             Arc::new(AgentSessionManager::new().with_hooks(Arc::clone(&hooks)));
 
+        // Create WASM runtime in the outer scope so AppComponents can hold it.
+        #[cfg(feature = "wasm-sandbox")]
+        let wasm_tool_runtime: Option<Arc<WasmToolRuntime>> = if self.config.wasm.enabled {
+            WasmToolRuntime::new(self.config.wasm.to_runtime_config())
+                .map(Arc::new)
+                .map_err(|e| tracing::warn!("Failed to initialize WASM runtime: {}", e))
+                .ok()
+        } else {
+            None
+        };
+        #[cfg(not(feature = "wasm-sandbox"))]
+        let wasm_tool_runtime: Option<Arc<WasmToolRuntime>> = None;
+
         let (
             mcp_session_manager,
             mcp_process_manager,
-            wasm_tool_runtime,
             extension_manager,
             catalog_entries,
             dev_loaded_tool_names,
-        ) = self.init_extensions(&tools, &hooks).await?;
+        ) = self
+            .init_extensions(&tools, &hooks, &wasm_tool_runtime)
+            .await?;
 
         // Load bootstrap-completed flag from settings so that existing users
         // who already completed onboarding don't re-get bootstrap injection.
