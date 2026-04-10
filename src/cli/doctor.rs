@@ -556,6 +556,9 @@ fn check_secrets(settings: &Settings) -> CheckResult {
                 )
             }
         }
+        crate::settings::KeySource::File => {
+            CheckResult::Pass("master key source: file (~/.ironclaw/master.key)".into())
+        }
         crate::settings::KeySource::None => {
             CheckResult::Skip("secrets not configured (run `ironclaw onboard`)".into())
         }
