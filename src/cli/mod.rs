@@ -59,6 +59,41 @@ use std::sync::Arc;
 
 use clap::{ColorChoice, Parser, Subcommand};
 
+/// NDJSON / text output format.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub enum OutputFormat {
+    /// Default human-facing REPL output.
+    #[default]
+    Text,
+    /// Single JSON object at end of run (non-streaming).
+    Json,
+    /// Streaming NDJSON (one JSON object per line).
+    StreamJson,
+}
+
+/// NDJSON / text input format.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub enum InputFormat {
+    /// Interactive rustyline REPL.
+    #[default]
+    Text,
+    /// Streaming NDJSON on stdin.
+    StreamJson,
+}
+
+/// NDJSON output compatibility mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub enum CompatFormat {
+    /// IronClaw native event shape.
+    #[default]
+    Ironclaw,
+    /// Claude Code compatible event shape.
+    ClaudeCode,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "ironclaw")]
 #[command(
@@ -92,6 +127,38 @@ pub struct Cli {
     /// Skip first-run onboarding check
     #[arg(long, global = true)]
     pub no_onboard: bool,
+
+    /// Non-interactive mode: send a prompt and exit.
+    #[arg(short = 'p', long = "print", global = true, conflicts_with = "message")]
+    pub print: Option<String>,
+
+    /// Output format.
+    #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
+    pub output_format: OutputFormat,
+
+    /// Input format.
+    #[arg(long, global = true, value_enum, default_value_t = InputFormat::Text)]
+    pub input_format: InputFormat,
+
+    /// Resume a specific session by UUID (conflicts with --resume).
+    #[arg(long, global = true, conflicts_with = "resume")]
+    pub session_id: Option<String>,
+
+    /// Resume the most recent session for the current user.
+    #[arg(long, global = true)]
+    pub resume: bool,
+
+    /// Include intermediate assistant/user messages in output.
+    #[arg(long, global = true)]
+    pub verbose: bool,
+
+    /// Additional event types to include in NDJSON output.
+    #[arg(long, global = true, value_delimiter = ',')]
+    pub include_events: Vec<String>,
+
+    /// NDJSON output compatibility mode.
+    #[arg(long, global = true, value_enum, default_value_t = CompatFormat::Ironclaw)]
+    pub compat: CompatFormat,
 }
 
 #[derive(Subcommand, Debug)]
@@ -319,6 +386,23 @@ impl Cli {
     pub fn should_run_agent(&self) -> bool {
         matches!(self.command, None | Some(Command::Run))
     }
+
+    /// Validate cross-flag invariants. Call after `clap` parsing.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.input_format == InputFormat::StreamJson && self.output_format == OutputFormat::Text
+        {
+            return Err("--input-format stream-json requires --output-format stream-json".into());
+        }
+        if self.compat == CompatFormat::ClaudeCode && self.output_format == OutputFormat::Text {
+            return Err("--compat claude-code requires --output-format stream-json".into());
+        }
+        Ok(())
+    }
+
+    /// Whether the process should run in NDJSON (non-text) mode.
+    pub fn is_ndjson_mode(&self) -> bool {
+        !matches!(self.output_format, OutputFormat::Text)
+    }
 }
 
 /// Initialize a secrets store from environment config.
@@ -382,7 +466,69 @@ pub async fn run_memory_command(mem_cmd: &MemoryCommand) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use clap::Parser;
     use insta::assert_snapshot;
+
+    fn parse_args(args: &[&str]) -> Cli {
+        let mut full: Vec<String> = vec!["ironclaw".into()];
+        full.extend(args.iter().map(|s| s.to_string()));
+        Cli::parse_from(full)
+    }
+
+    #[test]
+    fn text_is_default_output_format() {
+        let cli = parse_args(&[]);
+        assert_eq!(cli.output_format, OutputFormat::Text);
+        assert!(!cli.is_ndjson_mode());
+    }
+
+    #[test]
+    fn stream_json_flag_is_parsed() {
+        let cli = parse_args(&["--output-format", "stream-json"]);
+        assert_eq!(cli.output_format, OutputFormat::StreamJson);
+        assert!(cli.is_ndjson_mode());
+    }
+
+    #[test]
+    fn session_id_and_resume_conflict() {
+        let result = Cli::try_parse_from([
+            "ironclaw",
+            "--session-id",
+            "00000000-0000-0000-0000-000000000000",
+            "--resume",
+        ]);
+        assert!(result.is_err(), "session-id and resume should conflict");
+    }
+
+    #[test]
+    fn stream_json_input_without_stream_json_output_fails_validation() {
+        let cli = parse_args(&["--input-format", "stream-json"]);
+        assert!(cli.validate().is_err());
+    }
+
+    #[test]
+    fn claude_code_compat_without_stream_json_fails_validation() {
+        let cli = parse_args(&["--compat", "claude-code"]);
+        assert!(cli.validate().is_err());
+    }
+
+    #[test]
+    fn claude_code_compat_with_stream_json_is_valid() {
+        let cli = parse_args(&["--output-format", "stream-json", "--compat", "claude-code"]);
+        assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn print_and_message_conflict() {
+        let result = Cli::try_parse_from(["ironclaw", "--print", "hi", "--message", "world"]);
+        assert!(result.is_err(), "print and message should conflict");
+    }
+
+    #[test]
+    fn include_events_comma_separated() {
+        let cli = parse_args(&["--include-events", "reasoning,cost"]);
+        assert_eq!(cli.include_events, vec!["reasoning", "cost"]);
+    }
 
     #[test]
     fn test_version() {

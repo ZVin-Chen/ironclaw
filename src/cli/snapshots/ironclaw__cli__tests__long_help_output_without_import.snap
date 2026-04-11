@@ -47,6 +47,49 @@ Options:
       --no-onboard
           Skip first-run onboarding check
 
+  -p, --print <PRINT>
+          Non-interactive mode: send a prompt and exit
+
+      --output-format <OUTPUT_FORMAT>
+          Output format
+
+          Possible values:
+          - text:        Default human-facing REPL output
+          - json:        Single JSON object at end of run (non-streaming)
+          - stream-json: Streaming NDJSON (one JSON object per line)
+          
+          [default: text]
+
+      --input-format <INPUT_FORMAT>
+          Input format
+
+          Possible values:
+          - text:        Interactive rustyline REPL
+          - stream-json: Streaming NDJSON on stdin
+          
+          [default: text]
+
+      --session-id <SESSION_ID>
+          Resume a specific session by UUID (conflicts with --resume)
+
+      --resume
+          Resume the most recent session for the current user
+
+      --verbose
+          Include intermediate assistant/user messages in output
+
+      --include-events <INCLUDE_EVENTS>
+          Additional event types to include in NDJSON output
+
+      --compat <COMPAT>
+          NDJSON output compatibility mode
+
+          Possible values:
+          - ironclaw:    IronClaw native event shape
+          - claude-code: Claude Code compatible event shape
+          
+          [default: ironclaw]
+
   -h, --help
           Print help (see a summary with '-h')
 
