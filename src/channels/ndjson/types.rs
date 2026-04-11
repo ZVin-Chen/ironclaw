@@ -56,7 +56,7 @@ pub enum NdjsonInput {
 
 /// Control-response payload discriminated by `behavior`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "behavior", rename_all = "snake_case")]
+#[serde(tag = "behavior", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponsePayload {
     /// Approve this single tool call.
     Allow {
@@ -252,6 +252,7 @@ pub enum ResultSubtype {
 pub struct UsageTotals {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Formatted decimal string per design spec — avoids float rounding on the wire.
     pub total_cost_usd: String,
 }
 
@@ -473,7 +474,7 @@ mod tests {
     fn input_interrupt_parses() {
         let line = r#"{"type":"interrupt"}"#;
         let parsed: NdjsonInput = serde_json::from_str(line).unwrap();
-        matches!(parsed, NdjsonInput::Interrupt);
+        assert!(matches!(parsed, NdjsonInput::Interrupt));
     }
 
     #[test]
@@ -481,5 +482,15 @@ mod tests {
         let line = r#"{"type":"bogus"}"#;
         let result: Result<NdjsonInput, _> = serde_json::from_str(line);
         assert!(result.is_err(), "unknown type should fail to deserialize");
+    }
+
+    #[test]
+    fn control_response_rejects_unknown_payload_fields() {
+        let line = r#"{"type":"control_response","request_id":"x","response":{"behavior":"deny","messagee":"typo"}}"#;
+        let result: Result<NdjsonInput, _> = serde_json::from_str(line);
+        assert!(
+            result.is_err(),
+            "unknown field in control_response payload should fail to deserialize"
+        );
     }
 }
