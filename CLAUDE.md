@@ -228,6 +228,8 @@ See `.env.example` for all environment variables. LLM backends (`nearai`, `opena
 3. Add config in `src/config/channels.rs`
 4. Wire up in `src/app.rs` channel setup section
 
+For programmatic access, IronClaw supports a subprocess-friendly NDJSON CLI mode; see `docs/superpowers/specs/2026-04-11-ndjson-cli-mode-design.md`.
+
 ## Workspace & Memory
 
 Persistent memory with hybrid search (FTS + vector via RRF). Four tools: `memory_search`, `memory_write`, `memory_read`, `memory_tree`. Identity files (AGENTS.md, SOUL.md, USER.md, IDENTITY.md) injected into system prompt. Heartbeat system runs proactive periodic execution (default: 30 minutes), reading `HEARTBEAT.md` and notifying via channel if findings. See `src/workspace/README.md`.

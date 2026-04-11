@@ -1,7 +1,7 @@
 # NDJSON CLI Mode — Design Spec
 
 **Date**: 2026-04-11
-**Status**: Draft — pending implementation
+**Status**: Implemented (Phase 1)
 **Owner**: TBD
 
 ## Summary
