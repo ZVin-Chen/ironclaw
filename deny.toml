@@ -17,6 +17,20 @@ ignore = [
     "RUSTSEC-2026-0021",
     # rustls-webpki CRL distributionPoint matching — 0.102.8 pinned by libsql transitive dep
     "RUSTSEC-2026-0049",
+    # wasmtime v28 batch advisories — pinned at v28, upgrade tracked separately
+    "RUSTSEC-2026-0085",
+    "RUSTSEC-2026-0086",
+    "RUSTSEC-2026-0087",
+    "RUSTSEC-2026-0088",
+    "RUSTSEC-2026-0089",
+    "RUSTSEC-2026-0091",
+    "RUSTSEC-2026-0092",
+    "RUSTSEC-2026-0093",
+    "RUSTSEC-2026-0094",
+    "RUSTSEC-2026-0095",
+    "RUSTSEC-2026-0096",
+    # rand 0.8.x unsoundness with custom logger — pinned by transitive deps, upgrade tracked separately
+    "RUSTSEC-2026-0097",
 ]
 
 [licenses]
