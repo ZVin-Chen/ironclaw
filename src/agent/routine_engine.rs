@@ -2229,28 +2229,59 @@ fn strip_html_tags(s: &str) -> String {
     });
 
     // Custom elements: tags containing a hyphen (web components spec requires it).
+    // Require a lowercase letter before the hyphen per HTML spec for custom elements.
     // E.g. <custom-element>, <my-widget foo="bar">, </x-foo>
     static CUSTOM_ELEMENT_RE: LazyLock<Option<Regex>> =
-        LazyLock::new(|| Regex::new(r"(?i)</?\w+-[\w-]*(?:\s[^>]*)?\s*/?>").ok());
+        LazyLock::new(|| Regex::new(r"(?i)</?[a-z][\w]*-[\w-]*(?:\s[^>]*)?\s*/?>").ok());
+
+    // Catch-all: strip any remaining HTML-like tags not caught by the specific patterns.
+    // This handles unknown/future tags like <marquee>, <plaintext>, <isindex>, etc.
+    // Only matches tags starting with a lowercase letter followed by more letters,
+    // preserving generics like Vec<String> (uppercase) and Vec<u8> (letter + digit).
+    // HTML tags are always two+ letters (single-letter tags like <a>, <b>, <i>, <p>,
+    // <s>, <u> are already in the known-tag allowlist above).
+    static CATCHALL_TAG_RE: LazyLock<Option<Regex>> =
+        LazyLock::new(|| Regex::new(r"</?[a-z][a-zA-Z]+[a-zA-Z0-9]*(?:\s[^>]*)?>").ok());
 
     let mut result = s.to_string();
+
+    let mut failed = false;
 
     if let Some(re) = COMMENT_RE.as_ref() {
         result = re.replace_all(&result, "").into_owned();
     } else {
-        tracing::error!("HTML comment regex failed to compile; skipping comment sanitization");
+        tracing::warn!("HTML comment regex failed to compile; falling back to angle-bracket strip");
+        failed = true;
     }
     if let Some(re) = HTML_TAG_RE.as_ref() {
         result = re.replace_all(&result, "").into_owned();
     } else {
-        tracing::error!("HTML tag regex failed to compile; skipping tag sanitization");
+        tracing::warn!("HTML tag regex failed to compile; falling back to angle-bracket strip");
+        failed = true;
     }
     if let Some(re) = CUSTOM_ELEMENT_RE.as_ref() {
         result = re.replace_all(&result, "").into_owned();
     } else {
-        tracing::error!(
-            "Custom element regex failed to compile; skipping custom element sanitization"
+        tracing::warn!(
+            "Custom element regex failed to compile; falling back to angle-bracket strip"
         );
+        failed = true;
+    }
+
+    // Fail-closed: if any regex failed to compile, strip all angle brackets
+    // to prevent unsanitized HTML from passing through to rendered output.
+    if failed {
+        result = result.chars().filter(|c| *c != '<' && *c != '>').collect();
+        return result;
+    }
+
+    // Catch-all: strip any remaining HTML-like tags not caught by specific patterns.
+    // This handles unknown/future tags like <marquee>, <plaintext>, <isindex>.
+    if let Some(re) = CATCHALL_TAG_RE.as_ref() {
+        result = re.replace_all(&result, "").into_owned();
+    } else {
+        tracing::warn!("Catch-all tag regex failed to compile; stripping all angle brackets");
+        result = result.chars().filter(|c| *c != '<' && *c != '>').collect();
     }
 
     result
