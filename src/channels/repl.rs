@@ -889,6 +889,36 @@ impl Channel for ReplChannel {
                     );
                 }
             }
+            StatusUpdate::CompactionStarted {
+                strategy,
+                trigger,
+                usage_percent,
+            } => {
+                self.clear_transient();
+                eprintln!(
+                    "  {}\u{25C7} compacting ({trigger}, {strategy}) at {usage_percent:.0}%{}",
+                    fmt::dim(),
+                    fmt::reset()
+                );
+            }
+            StatusUpdate::CompactionCompleted {
+                turns_removed,
+                tokens_before,
+                tokens_after,
+                summary_written,
+            } => {
+                self.clear_transient();
+                let suffix = if summary_written {
+                    " (summary written)"
+                } else {
+                    ""
+                };
+                eprintln!(
+                    "  {}\u{25C6} compacted: {turns_removed} turns removed, {tokens_before} \u{2192} {tokens_after} tokens{suffix}{}",
+                    fmt::dim(),
+                    fmt::reset()
+                );
+            }
         }
         Ok(())
     }
