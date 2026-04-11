@@ -170,23 +170,12 @@ mod stubs {
     use super::limits::{FuelConfig, ResourceLimits};
 
     /// Stub runtime configuration (no wasmtime available).
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     pub struct WasmRuntimeConfig {
         pub default_limits: ResourceLimits,
         pub fuel_config: FuelConfig,
         pub cache_compiled: bool,
         pub cache_dir: Option<PathBuf>,
-    }
-
-    impl Default for WasmRuntimeConfig {
-        fn default() -> Self {
-            Self {
-                default_limits: ResourceLimits::default(),
-                fuel_config: FuelConfig::default(),
-                cache_compiled: false,
-                cache_dir: None,
-            }
-        }
     }
 
     impl WasmRuntimeConfig {
