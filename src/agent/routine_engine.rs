@@ -2263,43 +2263,44 @@ fn strip_html_tags(s: &str) -> String {
         Regex::new(&format!(r"(?i)</?(?:{})(?:\s[^>]*)?\s*/?>", tags)).ok()
     });
 
-    // Custom elements: tags containing a hyphen (web components spec requires it).
-    // Require a lowercase letter before the hyphen per HTML spec for custom elements.
-    // E.g. <custom-element>, <my-widget foo="bar">, </x-foo>
-    static CUSTOM_ELEMENT_RE: LazyLock<Option<Regex>> =
-        LazyLock::new(|| Regex::new(r"(?i)</?[a-z][\w]*-[\w-]*(?:\s[^>]*)?\s*/?>").ok());
+    // Catch-all: strip any remaining angle-bracket content that looks like an HTML tag.
+    // Uses a two-pass approach: the known-tag allowlist (above) handles precise stripping,
+    // and this catch-all handles unknown/future tags like <marquee>, <blink>, <details>,
+    // custom elements like <my-widget>, etc.
+    //
+    // The pattern matches opening/closing/self-closing tags starting with a letter,
+    // optionally containing hyphens (custom elements) or dots. This is intentionally
+    // broad -- it strips anything that looks like a tag. Non-HTML angle brackets like
+    // Vec<String>, comparison operators (x < 10), and shell redirects (cat < file) are
+    // preserved by the Rust-generic-preservation regex applied beforehand.
+    static GENERIC_PRESERVE_RE: LazyLock<Option<Regex>> = LazyLock::new(|| {
+        // Matches Rust/Java/C++ generics: Identifier<Type>, HashMap<K, V>, Vec<u8>, etc.
+        // Captures the full expression to be replaced with a placeholder, then restored.
+        Regex::new(r"[A-Z]\w*<[^>]+>").ok()
+    });
 
-    // Catch-all: strip any remaining HTML-like tags not caught by the specific patterns.
-    // This handles unknown/future tags like <marquee>, <plaintext>, <isindex>, etc.
-    // Only matches tags starting with a lowercase letter followed by more letters,
-    // preserving generics like Vec<String> (uppercase) and Vec<u8> (letter + digit).
-    // HTML tags are always two+ letters (single-letter tags like <a>, <b>, <i>, <p>,
-    // <s>, <u> are already in the known-tag allowlist above).
     static CATCHALL_TAG_RE: LazyLock<Option<Regex>> =
-        LazyLock::new(|| Regex::new(r"</?[a-z][a-zA-Z]+[a-zA-Z0-9]*(?:\s[^>]*)?>").ok());
+        LazyLock::new(|| Regex::new(r"</?[a-zA-Z][\w-]*(?:\s[^>]*)?\s*/?>").ok());
 
     let mut result = s.to_string();
 
     let mut failed = false;
 
+    // Step 1: Strip HTML comments first (they can contain anything).
     if let Some(re) = COMMENT_RE.as_ref() {
         result = re.replace_all(&result, "").into_owned();
     } else {
-        tracing::warn!("HTML comment regex failed to compile; falling back to angle-bracket strip");
+        tracing::debug!(
+            "HTML comment regex failed to compile; falling back to angle-bracket strip"
+        );
         failed = true;
     }
+
+    // Step 2: Strip known HTML/SVG/MathML tags by allowlist.
     if let Some(re) = HTML_TAG_RE.as_ref() {
         result = re.replace_all(&result, "").into_owned();
     } else {
-        tracing::warn!("HTML tag regex failed to compile; falling back to angle-bracket strip");
-        failed = true;
-    }
-    if let Some(re) = CUSTOM_ELEMENT_RE.as_ref() {
-        result = re.replace_all(&result, "").into_owned();
-    } else {
-        tracing::warn!(
-            "Custom element regex failed to compile; falling back to angle-bracket strip"
-        );
+        tracing::debug!("HTML tag regex failed to compile; falling back to angle-bracket strip");
         failed = true;
     }
 
@@ -2310,13 +2311,37 @@ fn strip_html_tags(s: &str) -> String {
         return result;
     }
 
-    // Catch-all: strip any remaining HTML-like tags not caught by specific patterns.
-    // This handles unknown/future tags like <marquee>, <plaintext>, <isindex>.
-    if let Some(re) = CATCHALL_TAG_RE.as_ref() {
-        result = re.replace_all(&result, "").into_owned();
-    } else {
-        tracing::warn!("Catch-all tag regex failed to compile; stripping all angle brackets");
-        result = result.chars().filter(|c| *c != '<' && *c != '>').collect();
+    // Step 3: Two-pass catch-all for unknown/future tags and custom elements.
+    // First, protect Rust/Java/C++ generics (e.g. Vec<String>, HashMap<K, V>)
+    // by replacing them with placeholders, then strip all remaining HTML-like tags,
+    // then restore the generics.
+    match (GENERIC_PRESERVE_RE.as_ref(), CATCHALL_TAG_RE.as_ref()) {
+        (Some(generic_re), Some(catchall_re)) => {
+            // Collect generics and replace with placeholders
+            let mut generics: Vec<String> = Vec::new();
+            let preserved = generic_re
+                .replace_all(&result, |caps: &regex::Captures| {
+                    let idx = generics.len();
+                    generics.push(caps[0].to_string());
+                    format!("\x00GEN{idx}\x00")
+                })
+                .into_owned();
+
+            // Strip all remaining HTML-like tags (unknown tags, custom elements, etc.)
+            let stripped = catchall_re.replace_all(&preserved, "").into_owned();
+
+            // Restore generics from placeholders
+            result = stripped;
+            for (idx, generic) in generics.iter().enumerate() {
+                result = result.replace(&format!("\x00GEN{idx}\x00"), generic);
+            }
+        }
+        _ => {
+            tracing::debug!(
+                "Catch-all or generic-preserve regex failed to compile; stripping all angle brackets"
+            );
+            result = result.chars().filter(|c| *c != '<' && *c != '>').collect();
+        }
     }
 
     result
