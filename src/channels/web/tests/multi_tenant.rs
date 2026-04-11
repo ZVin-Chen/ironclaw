@@ -83,6 +83,7 @@ fn build_state(
         active_config: ActiveConfigSnapshot::default(),
         secrets_store: None,
         db_auth: None,
+        previous_version: None,
     })
 }
 

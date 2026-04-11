@@ -702,6 +702,7 @@ mod tests {
             active_config: crate::channels::web::server::ActiveConfigSnapshot::default(),
             secrets_store: Some(secrets),
             db_auth: None,
+            previous_version: None,
         }
     }
 

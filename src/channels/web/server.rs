@@ -402,6 +402,13 @@ pub struct GatewayState {
     pub secrets_store: Option<Arc<dyn crate::secrets::SecretsStore + Send + Sync>>,
     /// DB auth cache for invalidation on security-critical actions.
     pub db_auth: Option<Arc<crate::channels::web::auth::DbAuthenticator>>,
+    /// Version string that was persisted by the *previous* boot of this
+    /// installation, read from the settings table before the current-version
+    /// write during startup. `None` on first boot or when version tracking
+    /// failed. Surfaced in `/api/gateway/status` so reconnecting browser
+    /// clients can detect version changes across restarts, even if their
+    /// in-memory "last known version" was lost (e.g., page refresh).
+    pub previous_version: Option<String>,
 }
 
 /// Start the gateway HTTP server.
@@ -2812,6 +2819,7 @@ async fn gateway_status_handler(
 
     Json(GatewayStatusResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        previous_version: state.previous_version.clone(),
         sse_connections,
         ws_connections,
         total_connections: sse_connections + ws_connections,
@@ -2837,6 +2845,10 @@ struct ModelUsageEntry {
 #[derive(serde::Serialize)]
 struct GatewayStatusResponse {
     version: String,
+    /// The version persisted by the previous boot (None on first boot).
+    /// Clients compare this against `version` to detect restart-time version changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous_version: Option<String>,
     sse_connections: u64,
     ws_connections: u64,
     total_connections: u64,
@@ -3052,6 +3064,7 @@ mod tests {
             active_config: ActiveConfigSnapshot::default(),
             secrets_store: None,
             db_auth: None,
+            previous_version: None,
         })
     }
 

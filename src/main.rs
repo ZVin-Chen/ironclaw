@@ -632,6 +632,9 @@ async fn async_main() -> anyhow::Result<()> {
         if let Some(ref d) = components.db {
             gw = gw.with_store(Arc::clone(d));
             gw = gw.with_db_auth(Arc::clone(d));
+            // Forward the previously-recorded version so the gateway can
+            // surface it in /api/gateway/status for reconnect warnings.
+            gw = gw.with_previous_version(components.previous_recorded_version.clone());
             if let Some(ref ss) = components.secrets_store {
                 gw = gw.with_secrets_store(Arc::clone(ss));
             }

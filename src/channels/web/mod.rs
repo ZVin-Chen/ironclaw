@@ -136,6 +136,7 @@ impl GatewayChannel {
             active_config: server::ActiveConfigSnapshot::default(),
             secrets_store: None,
             db_auth: None,
+            previous_version: None,
         });
 
         Self {
@@ -178,6 +179,7 @@ impl GatewayChannel {
             active_config: self.state.active_config.clone(),
             secrets_store: self.state.secrets_store.clone(),
             db_auth: self.state.db_auth.clone(),
+            previous_version: self.state.previous_version.clone(),
         };
         mutate(&mut new_state);
         self.state = Arc::new(new_state);
@@ -186,6 +188,15 @@ impl GatewayChannel {
     /// Inject the workspace reference for the memory API.
     pub fn with_workspace(mut self, workspace: Arc<Workspace>) -> Self {
         self.rebuild_state(|s| s.workspace = Some(workspace));
+        self
+    }
+
+    /// Inject the version persisted by the previous boot, if any.
+    ///
+    /// This is surfaced in `/api/gateway/status` so reconnecting browser
+    /// clients can detect version changes across restarts server-authoritatively.
+    pub fn with_previous_version(mut self, previous: Option<String>) -> Self {
+        self.rebuild_state(|s| s.previous_version = previous);
         self
     }
 
