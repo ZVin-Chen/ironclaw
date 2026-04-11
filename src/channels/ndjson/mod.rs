@@ -3,6 +3,9 @@
 //! See the design spec at `docs/superpowers/specs/2026-04-11-ndjson-cli-mode-design.md`.
 
 mod types;
+mod approval;
+mod session;
+mod compat;
 
 pub use types::{CompatMode, EventFilter};
 
