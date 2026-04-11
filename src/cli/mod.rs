@@ -149,7 +149,7 @@ pub struct Cli {
     pub resume: bool,
 
     /// Include intermediate assistant/user messages in output.
-    #[arg(long, global = true)]
+    #[arg(long)]
     pub verbose: bool,
 
     /// Additional event types to include in NDJSON output.
