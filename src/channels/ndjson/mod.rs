@@ -2,10 +2,12 @@
 //!
 //! See the design spec at `docs/superpowers/specs/2026-04-11-ndjson-cli-mode-design.md`.
 
-mod types;
 mod approval;
-mod session;
+#[allow(unused_imports)]
+pub(crate) use approval::ApprovalState;
 mod compat;
+mod session;
+mod types;
 
 pub use types::{CompatMode, EventFilter};
 

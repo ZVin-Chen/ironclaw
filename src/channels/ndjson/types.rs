@@ -65,7 +65,6 @@ pub enum ControlResponsePayload {
         updated_input: Option<serde_json::Value>,
     },
     /// Approve and add to always-allow list for this session.
-    #[allow(dead_code)]
     Always,
     /// Reject the tool call with an optional user-facing reason.
     Deny {
