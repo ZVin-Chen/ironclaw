@@ -2,6 +2,16 @@
 //!
 //! This is a pure function — no I/O, no locks. The channel calls it before
 //! writing a line when `compat_mode == CompatMode::ClaudeCode`.
+//!
+//! # Lossy mappings
+//!
+//! - `ResultSubtype::Interrupted` is mapped to `"error_during_execution"`
+//!   because the Claude Code SDK has no dedicated subtype for user
+//!   interrupts. `is_error` is still set to `true`.
+//! - `SystemEvent::Thinking`, `Reasoning`, and `SkillActivated` have no
+//!   Claude Code equivalent and are dropped (return `Value::Null`). This
+//!   is unconditional — even if the user enables `--include-events
+//!   reasoning`, these events are suppressed in Claude Code compat mode.
 
 use serde_json::{json, Value};
 
@@ -288,5 +298,69 @@ mod tests {
         assert_eq!(v["is_error"], false);
         assert_eq!(v["usage"]["input_tokens"], 100);
         assert_eq!(v["total_cost_usd"], "0.001");
+    }
+
+    #[test]
+    fn user_message_collapses_tool_results_to_content_blocks() {
+        use crate::channels::ndjson::types::{UserMessage, UserToolResult};
+        let ev = NdjsonOutput::User {
+            session_id: "sess".into(),
+            message: UserMessage {
+                role: "user".into(),
+                tool_results: vec![
+                    UserToolResult {
+                        tool_use_id: "t-1".into(),
+                        name: "read_file".into(),
+                        content: "file body".into(),
+                        is_error: false,
+                    },
+                    UserToolResult {
+                        tool_use_id: "t-2".into(),
+                        name: "shell".into(),
+                        content: "command failed".into(),
+                        is_error: true,
+                    },
+                ],
+            },
+        };
+        let v = to_claude_code(&ev);
+        assert_eq!(v["type"], "user");
+        assert_eq!(v["session_id"], "sess");
+        let content = v["message"]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "t-1");
+        assert_eq!(content[0]["content"], "file body");
+        assert_eq!(content[0]["is_error"], false);
+        assert_eq!(content[1]["tool_use_id"], "t-2");
+        assert_eq!(content[1]["is_error"], true);
+    }
+
+    #[test]
+    fn result_interrupted_maps_to_error_during_execution() {
+        let ev = NdjsonOutput::Result(ResultEvent {
+            subtype: ResultSubtype::Interrupted,
+            session_id: "sess".into(),
+            result: None,
+            duration_ms: 50,
+            num_turns: 1,
+            usage: UsageTotals::default(),
+            error: Some("user interrupted".into()),
+        });
+        let v = to_claude_code(&ev);
+        assert_eq!(v["type"], "result");
+        assert_eq!(v["subtype"], "error_during_execution");
+        assert_eq!(v["is_error"], true);
+    }
+
+    #[test]
+    fn error_event_preserves_message_field() {
+        let ev = NdjsonOutput::Error {
+            session_id: "sess".into(),
+            message: "LLM provider unavailable".into(),
+        };
+        let v = to_claude_code(&ev);
+        assert_eq!(v["type"], "error");
+        assert_eq!(v["message"], "LLM provider unavailable");
     }
 }
