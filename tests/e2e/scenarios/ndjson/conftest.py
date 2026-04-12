@@ -1,22 +1,44 @@
 """Fixtures for NDJSON CLI mode E2E tests.
 
 These tests drive ironclaw as a subprocess via stdin/stdout NDJSON protocol
-using live LLM calls (zai_anthropic). No mocking.
+using live LLM calls. No mocking.
+
+Uses the user's main ironclaw database directly — LLM provider config and
+API keys are read from the existing DB at startup. Test conversations are
+written to the main DB but are harmless (just normal conversation records).
 """
 
 import json
 import os
-import signal
 import subprocess
-import tempfile
 import threading
 import time
 from pathlib import Path
 
 import pytest
 
-# Project root (four levels up: scenarios/ndjson/ -> scenarios/ -> e2e/ -> tests/ -> root)
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# Project root (five levels up: conftest.py -> ndjson/ -> scenarios/ -> e2e/ -> tests/ -> root)
+ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+
+# ~/.ironclaw/.env holds DATABASE_URL and DATABASE_BACKEND
+_IRONCLAW_ENV = Path.home() / ".ironclaw" / ".env"
+
+
+def _read_ironclaw_env() -> dict[str, str]:
+    """Read key=value pairs from ~/.ironclaw/.env."""
+    result = {}
+    if not _IRONCLAW_ENV.exists():
+        pytest.fail(
+            f"Cannot find {_IRONCLAW_ENV} — ironclaw is not configured. "
+            f"Run 'ironclaw onboard' first."
+        )
+    for line in _IRONCLAW_ENV.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        result[key.strip()] = value.strip().strip('"').strip("'")
+    return result
 
 
 def _cargo_target_dir() -> Path:
@@ -147,28 +169,11 @@ class NdjsonProcess:
         except (OSError, BrokenPipeError):
             pass
         try:
-            self.proc.wait(timeout=30)
+            self.proc.wait(timeout=60)
         except subprocess.TimeoutExpired:
             self.proc.kill()
-            self.proc.wait(timeout=5)
+            self.proc.wait(timeout=10)
         return self.proc.returncode
-
-
-def _build_ndjson_env(db_path: str) -> dict[str, str]:
-    """Build subprocess environment inheriting current env + NDJSON overrides."""
-    env = os.environ.copy()
-    env.update({
-        "LLM_BACKEND": "zai_anthropic",
-        "DATABASE_BACKEND": "libsql",
-        "LIBSQL_PATH": db_path,
-        "ONBOARD_COMPLETED": "true",
-        "SANDBOX_ENABLED": "false",
-        "HEARTBEAT_ENABLED": "false",
-        "ROUTINES_ENABLED": "false",
-        "EMBEDDING_ENABLED": "false",
-        "CLI_ENABLED": "false",
-    })
-    return env
 
 
 @pytest.fixture(scope="session")
@@ -179,7 +184,7 @@ def ironclaw_binary():
     if not binary.exists():
         print("Building ironclaw (this may take a while)...")
         subprocess.run(
-            ["cargo", "build", "--no-default-features", "--features", "libsql"],
+            ["cargo", "build"],
             cwd=ROOT,
             check=True,
             timeout=600,
@@ -189,17 +194,28 @@ def ironclaw_binary():
 
 
 @pytest.fixture(scope="session")
-def ndjson_db_dir():
-    """Session-scoped temp directory for the libSQL database."""
-    with tempfile.TemporaryDirectory(prefix="ironclaw-ndjson-e2e-") as tmpdir:
-        yield tmpdir
+def ndjson_env():
+    """Session-scoped environment dict for NDJSON subprocess tests.
 
-
-@pytest.fixture(scope="session")
-def ndjson_env(ndjson_db_dir):
-    """Session-scoped environment dict for NDJSON subprocess tests."""
-    db_path = os.path.join(ndjson_db_dir, "ndjson-e2e.db")
-    return _build_ndjson_env(db_path)
+    Inherits the current environment and injects DB config from ~/.ironclaw/.env
+    so the subprocess connects to the user's main ironclaw database.
+    """
+    ironclaw_vars = _read_ironclaw_env()
+    env = os.environ.copy()
+    # Inject DB connection from ~/.ironclaw/.env
+    if "DATABASE_BACKEND" in ironclaw_vars:
+        env["DATABASE_BACKEND"] = ironclaw_vars["DATABASE_BACKEND"]
+    if "DATABASE_URL" in ironclaw_vars:
+        env["DATABASE_URL"] = ironclaw_vars["DATABASE_URL"]
+    env.update({
+        "ONBOARD_COMPLETED": "true",
+        "SANDBOX_ENABLED": "false",
+        "HEARTBEAT_ENABLED": "false",
+        "ROUTINES_ENABLED": "false",
+        "EMBEDDING_ENABLED": "false",
+        "CLI_ENABLED": "false",
+    })
+    return env
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -229,9 +245,9 @@ def llm_health_check(ironclaw_binary, ndjson_env):
     if not has_result_success:
         stderr = result.stderr.decode("utf-8", errors="replace")
         pytest.fail(
-            f"LLM health check failed for zai_anthropic — API key not configured "
-            f"or LLM unreachable. Configure ironclaw with a valid API key before "
-            f"running NDJSON E2E tests.\n"
+            f"LLM health check failed — API key not configured or LLM unreachable. "
+            f"Configure ironclaw with a valid LLM provider before running NDJSON "
+            f"E2E tests.\n"
             f"exit_code={result.returncode}\n"
             f"stdout:\n{stdout[:2000]}\n"
             f"stderr:\n{stderr[:2000]}"
@@ -260,7 +276,7 @@ def run_print(ironclaw_binary, ndjson_env):
             env.update(env_override)
 
         result = subprocess.run(
-            cmd, env=env, capture_output=True, timeout=120,
+            cmd, env=env, capture_output=True, timeout=180,
         )
         stdout = result.stdout.decode("utf-8", errors="replace")
         stderr = result.stderr.decode("utf-8", errors="replace")
