@@ -11,19 +11,16 @@ fn ironclaw_binary() -> PathBuf {
 }
 
 #[test]
-#[ignore = "Requires LLM provider; run manually with IRONCLAW_STUB_LLM=1"]
 fn print_mode_emits_init_assistant_result() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let home = dir.path().to_path_buf();
+    // Uses the user's ~/.ironclaw/ settings (which contains the LLM provider
+    // configuration). Set LLM_BACKEND to override if needed.
     let output = Command::new(ironclaw_binary())
         .arg("--print")
         .arg("say hi and nothing else")
         .arg("--output-format")
         .arg("stream-json")
         .arg("--no-db")
-        .env("IRONCLAW_BASE_DIR", &home)
-        .env("DATABASE_BACKEND", "libsql")
-        .env("LIBSQL_PATH", home.join("test.db"))
+        .env("LLM_BACKEND", "zai_anthropic")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()

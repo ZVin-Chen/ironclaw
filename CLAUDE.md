@@ -228,7 +228,7 @@ See `.env.example` for all environment variables. LLM backends (`nearai`, `opena
 3. Add config in `src/config/channels.rs`
 4. Wire up in `src/app.rs` channel setup section
 
-For programmatic access, IronClaw supports a subprocess-friendly NDJSON CLI mode; see `docs/superpowers/specs/2026-04-11-ndjson-cli-mode-design.md`.
+For programmatic access, IronClaw supports a subprocess-friendly NDJSON CLI mode; see `docs/NDJSON_INTEGRATION.md` for the caller-facing integration guide and `docs/superpowers/specs/2026-04-11-ndjson-cli-mode-design.md` for the internal design spec.
 
 ## Workspace & Memory
 
