@@ -5,6 +5,7 @@
 mod approval;
 mod compat;
 mod session;
+mod stdin_reader;
 mod types;
 
 #[allow(unused_imports)]
