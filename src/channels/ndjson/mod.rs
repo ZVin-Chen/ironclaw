@@ -12,8 +12,7 @@ mod types;
 pub(crate) use approval::ApprovalState;
 #[allow(unused_imports)]
 pub(crate) use compat::to_claude_code;
-#[allow(unused_imports)]
-pub(crate) use session::{resolve_session_id, SessionResolveArgs};
+pub use session::{SessionResolveArgs, resolve_session_id};
 pub use types::{CompatMode, EventFilter};
 
 #[cfg(test)]
