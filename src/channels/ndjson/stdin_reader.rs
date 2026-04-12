@@ -1,7 +1,6 @@
 //! Read NDJSON from stdin (or any `AsyncBufRead`) and route parsed lines into
 //! the channel's `IncomingMessage` stream and approval state.
 
-#![allow(dead_code)]
 
 use std::sync::Arc;
 

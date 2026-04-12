@@ -69,6 +69,7 @@ pub enum ControlResponsePayload {
     /// Reject the tool call with an optional user-facing reason.
     Deny {
         #[serde(default)]
+        #[allow(dead_code)]
         message: Option<String>,
     },
 }
@@ -112,7 +113,6 @@ pub enum NdjsonOutput {
         request: ControlRequestPayload,
     },
     Result(ResultEvent),
-    #[allow(dead_code)]
     Error {
         session_id: String,
         message: String,
@@ -170,11 +170,8 @@ pub enum SystemEvent {
         cwd: Option<String>,
         protocol_version: String,
     },
-    #[allow(dead_code)]
     Thinking { session_id: String, message: String },
-    #[allow(dead_code)]
     Status { session_id: String, status: String },
-    #[allow(dead_code)]
     CompactStarted {
         session_id: String,
         trigger: String,
@@ -188,12 +185,10 @@ pub enum SystemEvent {
         tokens_after: usize,
         summary_written: bool,
     },
-    #[allow(dead_code)]
     SkillActivated {
         session_id: String,
         skill_names: Vec<String>,
     },
-    #[allow(dead_code)]
     Reasoning {
         session_id: String,
         narrative: String,
@@ -239,6 +234,7 @@ pub struct ResultEvent {
 #[serde(rename_all = "snake_case")]
 pub enum ResultSubtype {
     Success,
+    #[allow(dead_code)]
     Error,
     #[allow(dead_code)]
     ErrorMaxTurns,
