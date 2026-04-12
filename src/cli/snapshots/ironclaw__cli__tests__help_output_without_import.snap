@@ -29,10 +29,33 @@ Commands:
   help        Print this message or the help of the given subcommand(s)
 
 Options:
-      --cli-only           Run in interactive CLI mode only (disable other channels)
-      --no-db              Skip database connection (for testing)
-  -m, --message <MESSAGE>  Single message mode - send one message and exit
-  -c, --config <CONFIG>    Configuration file path (optional, uses env vars by default)
-      --no-onboard         Skip first-run onboarding check
-  -h, --help               Print help (see more with '--help')
-  -V, --version            Print version
+      --cli-only
+          Run in interactive CLI mode only (disable other channels)
+      --no-db
+          Skip database connection (for testing)
+  -m, --message <MESSAGE>
+          Single message mode - send one message and exit
+  -c, --config <CONFIG>
+          Configuration file path (optional, uses env vars by default)
+      --no-onboard
+          Skip first-run onboarding check
+  -p, --print <PRINT>
+          Non-interactive mode: send a prompt and exit
+      --output-format <OUTPUT_FORMAT>
+          Output format [default: text] [possible values: text, json, stream-json]
+      --input-format <INPUT_FORMAT>
+          Input format [default: text] [possible values: text, stream-json]
+      --session-id <SESSION_ID>
+          Resume a specific session by UUID (conflicts with --resume)
+      --resume
+          Resume the most recent session for the current user
+      --verbose
+          Include intermediate assistant/user messages in output
+      --include-events <INCLUDE_EVENTS>
+          Additional event types to include in NDJSON output
+      --compat <COMPAT>
+          NDJSON output compatibility mode [default: ironclaw] [possible values: ironclaw, claude-code]
+  -h, --help
+          Print help (see more with '--help')
+  -V, --version
+          Print version

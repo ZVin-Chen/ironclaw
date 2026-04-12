@@ -357,6 +357,22 @@ pub enum StatusUpdate {
     },
     /// Skills activated for this conversation turn.
     SkillActivated { skill_names: Vec<String> },
+    /// Context-window compaction has begun.
+    CompactionStarted {
+        /// One of "summarize", "truncate", or "workspace".
+        strategy: String,
+        /// One of "auto" or "manual".
+        trigger: String,
+        /// Usage percentage at the moment compaction was triggered.
+        usage_percent: f32,
+    },
+    /// Context-window compaction has finished.
+    CompactionCompleted {
+        turns_removed: usize,
+        tokens_before: usize,
+        tokens_after: usize,
+        summary_written: bool,
+    },
 }
 
 impl StatusUpdate {
@@ -613,5 +629,50 @@ mod tests {
     fn test_incoming_message_with_timezone() {
         let msg = IncomingMessage::new("test", "user1", "hello").with_timezone("America/New_York");
         assert_eq!(msg.timezone.as_deref(), Some("America/New_York"));
+    }
+
+    #[test]
+    fn compaction_started_carries_trigger_and_strategy() {
+        let status = StatusUpdate::CompactionStarted {
+            strategy: "summarize".into(),
+            trigger: "auto".into(),
+            usage_percent: 85.2,
+        };
+        match status {
+            StatusUpdate::CompactionStarted {
+                strategy,
+                trigger,
+                usage_percent,
+            } => {
+                assert_eq!(strategy, "summarize");
+                assert_eq!(trigger, "auto");
+                assert!((usage_percent - 85.2).abs() < 0.01);
+            }
+            _ => panic!("expected CompactionStarted"),
+        }
+    }
+
+    #[test]
+    fn compaction_completed_carries_token_counts() {
+        let status = StatusUpdate::CompactionCompleted {
+            turns_removed: 8,
+            tokens_before: 85000,
+            tokens_after: 32000,
+            summary_written: true,
+        };
+        match status {
+            StatusUpdate::CompactionCompleted {
+                turns_removed,
+                tokens_before,
+                tokens_after,
+                summary_written,
+            } => {
+                assert_eq!(turns_removed, 8);
+                assert_eq!(tokens_before, 85000);
+                assert_eq!(tokens_after, 32000);
+                assert!(summary_written);
+            }
+            _ => panic!("expected CompactionCompleted"),
+        }
     }
 }

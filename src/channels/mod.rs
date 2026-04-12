@@ -30,6 +30,7 @@
 mod channel;
 mod http;
 mod manager;
+pub mod ndjson;
 pub mod relay;
 mod repl;
 mod signal;
@@ -43,6 +44,7 @@ pub use channel::{
 };
 pub use http::{HttpChannel, HttpChannelState};
 pub use manager::ChannelManager;
+pub use ndjson::{CompatMode as NdjsonCompatMode, EventFilter as NdjsonEventFilter};
 pub use repl::ReplChannel;
 pub use signal::SignalChannel;
 pub use web::GatewayChannel;

@@ -507,6 +507,11 @@ impl Channel for GatewayChannel {
                 skill_names,
                 thread_id,
             },
+            StatusUpdate::CompactionStarted { .. } | StatusUpdate::CompactionCompleted { .. } => {
+                // Handled structurally in NDJSON / REPL; other channels fall back to
+                // the existing Status() rendering path (not used for compaction).
+                return Ok(());
+            }
         };
 
         // Scope events to the user when user_id is available in metadata.

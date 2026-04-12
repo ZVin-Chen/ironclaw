@@ -86,6 +86,11 @@ fn format_top_level_error(err: &anyhow::Error) {
 async fn async_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    if let Err(e) = cli.validate() {
+        eprintln!("ironclaw: {}", e);
+        std::process::exit(2);
+    }
+
     // Handle non-agent commands first (they don't need full setup)
     match &cli.command {
         Some(Command::Tool(tool_cmd)) => {
@@ -288,8 +293,8 @@ async fn async_main() -> anyhow::Result<()> {
     if !cli.no_onboard
         && let Some(reason) = ironclaw::setup::check_onboard_needed()
     {
-        println!("Onboarding needed: {}", reason);
-        println!();
+        eprintln!("Onboarding needed: {}", reason);
+        eprintln!();
         let mut wizard = SetupWizard::try_with_config_and_toml(
             SetupConfig {
                 quick: true,
@@ -394,26 +399,56 @@ async fn async_main() -> anyhow::Result<()> {
     )> = None;
 
     // Create CLI channel
-    let repl_channel = if let Some(ref msg) = cli.message {
-        Some(ReplChannel::with_message_for_user(
-            config.owner_id.clone(),
-            msg.clone(),
-        ))
-    } else if config.channels.cli.enabled {
-        let repl = ReplChannel::with_user_id(config.owner_id.clone());
-        repl.suppress_banner();
-        Some(repl)
-    } else {
-        None
-    };
+    if cli.is_ndjson_mode() {
+        use ironclaw::channels::ndjson::{
+            CompatMode, EventFilter, NdjsonChannel, NdjsonChannelConfig,
+        };
+        use ironclaw::cli::{CompatFormat, InputFormat};
 
-    if let Some(repl) = repl_channel {
-        channels.add(Box::new(repl)).await;
-        if cli.message.is_some() {
-            tracing::debug!("Single message mode");
+        let compat_mode = match cli.compat {
+            CompatFormat::Ironclaw => CompatMode::Ironclaw,
+            CompatFormat::ClaudeCode => CompatMode::ClaudeCode,
+        };
+        let tool_names: Vec<String> = components.tools.list().await;
+        let model_name = components.llm.model_name().to_string();
+        let ndjson_config = NdjsonChannelConfig {
+            user_id: config.owner_id.clone(),
+            initial_prompt: cli.print.clone(),
+            streaming_input: matches!(cli.input_format, InputFormat::StreamJson),
+            compat_mode,
+            verbose: cli.verbose,
+            include_events: EventFilter::from_names(&cli.include_events),
+            tools: tool_names,
+            model_name,
+            session_id_arg: cli.session_id.clone(),
+            resume_latest: cli.resume,
+        };
+        let ndjson = NdjsonChannel::new(ndjson_config, components.db.clone());
+        channels.add(Box::new(ndjson)).await;
+        channel_names.push("ndjson".to_string());
+        tracing::debug!("NDJSON mode enabled; other channels suppressed");
+    } else {
+        let repl_channel = if let Some(ref msg) = cli.message {
+            Some(ReplChannel::with_message_for_user(
+                config.owner_id.clone(),
+                msg.clone(),
+            ))
+        } else if config.channels.cli.enabled {
+            let repl = ReplChannel::with_user_id(config.owner_id.clone());
+            repl.suppress_banner();
+            Some(repl)
         } else {
-            channel_names.push("repl".to_string());
-            tracing::debug!("REPL mode enabled");
+            None
+        };
+
+        if let Some(repl) = repl_channel {
+            channels.add(Box::new(repl)).await;
+            if cli.message.is_some() {
+                tracing::debug!("Single message mode");
+            } else {
+                channel_names.push("repl".to_string());
+                tracing::debug!("REPL mode enabled");
+            }
         }
     }
 
@@ -423,98 +458,100 @@ async fn async_main() -> anyhow::Result<()> {
 
     // Collect webhook route fragments; a single WebhookServer hosts them all.
     let mut webhook_routes: Vec<axum::Router> = Vec::new();
-
-    webhook_routes.push(webhooks::routes(ToolWebhookState {
-        tools: Arc::clone(&components.tools),
-        routine_engine: Arc::clone(&shared_routine_engine_slot),
-        user_id: config.owner_id.clone(),
-        secrets_store: components.secrets_store.clone(),
-    }));
-
-    // Load WASM channels and register their webhook routes.
-    // Ensure the channels directory exists so the WASM runtime initializes even when
-    // no channels are installed yet — hot-activation needs the runtime to be available.
-    if config.channels.wasm_channels_enabled
-        && let Err(e) = std::fs::create_dir_all(&config.channels.wasm_channels_dir)
-    {
-        tracing::warn!(
-            path = %config.channels.wasm_channels_dir.display(),
-            error = %e,
-            "Failed to create WASM channels directory"
-        );
-    }
-    if config.channels.wasm_channels_enabled && config.channels.wasm_channels_dir.exists() {
-        let wasm_result = ironclaw::channels::wasm::setup_wasm_channels(
-            &config,
-            &components.secrets_store,
-            components.extension_manager.as_ref(),
-            components.db.as_ref(),
-            &channel_names,
-        )
-        .await;
-
-        if let Some(result) = wasm_result {
-            loaded_wasm_channel_names = result.channel_names;
-            wasm_channel_runtime_state = Some((
-                result.wasm_channel_runtime,
-                result.pairing_store,
-                result.wasm_channel_router,
-            ));
-            for (name, channel) in result.channels {
-                channel_names.push(name);
-                channels.add(channel).await;
-            }
-            if let Some(routes) = result.webhook_routes {
-                webhook_routes.push(routes);
-            }
-        }
-    }
-
-    // Add Signal channel if configured and not CLI-only mode.
-    if !cli.cli_only
-        && let Some(ref signal_config) = config.channels.signal
-    {
-        let signal_channel = SignalChannel::new(signal_config.clone())?;
-        channel_names.push("signal".to_string());
-        channels.add(Box::new(signal_channel)).await;
-        let safe_url = SignalChannel::redact_url(&signal_config.http_url);
-        tracing::debug!(
-            url = %safe_url,
-            "Signal channel enabled"
-        );
-        if signal_config.allow_from.is_empty() {
-            tracing::warn!(
-                "Signal channel has empty allow_from list - ALL messages will be DENIED."
-            );
-        }
-    }
-
-    // Add HTTP channel if configured and not CLI-only mode.
     let mut webhook_server_addr: Option<std::net::SocketAddr> = None;
     #[cfg(unix)]
     let mut http_channel_state: Option<Arc<ironclaw::channels::HttpChannelState>> = None;
-    if !cli.cli_only
-        && let Some(ref http_config) = config.channels.http
-    {
-        let http_channel = HttpChannel::new(http_config.clone());
-        #[cfg(unix)]
+
+    if !cli.is_ndjson_mode() {
+        webhook_routes.push(webhooks::routes(ToolWebhookState {
+            tools: Arc::clone(&components.tools),
+            routine_engine: Arc::clone(&shared_routine_engine_slot),
+            user_id: config.owner_id.clone(),
+            secrets_store: components.secrets_store.clone(),
+        }));
+
+        // Load WASM channels and register their webhook routes.
+        // Ensure the channels directory exists so the WASM runtime initializes even when
+        // no channels are installed yet — hot-activation needs the runtime to be available.
+        if config.channels.wasm_channels_enabled
+            && let Err(e) = std::fs::create_dir_all(&config.channels.wasm_channels_dir)
         {
-            http_channel_state = Some(http_channel.shared_state());
+            tracing::warn!(
+                path = %config.channels.wasm_channels_dir.display(),
+                error = %e,
+                "Failed to create WASM channels directory"
+            );
         }
-        webhook_routes.push(http_channel.routes());
-        let (host, port) = http_channel.addr();
-        webhook_server_addr = Some(
-            format!("{}:{}", host, port)
-                .parse()
-                .expect("HttpConfig host:port must be a valid SocketAddr"),
-        );
-        channel_names.push("http".to_string());
-        channels.add(Box::new(http_channel)).await;
-        tracing::debug!(
-            "HTTP channel enabled on {}:{}",
-            http_config.host,
-            http_config.port
-        );
+        if config.channels.wasm_channels_enabled && config.channels.wasm_channels_dir.exists() {
+            let wasm_result = ironclaw::channels::wasm::setup_wasm_channels(
+                &config,
+                &components.secrets_store,
+                components.extension_manager.as_ref(),
+                components.db.as_ref(),
+                &channel_names,
+            )
+            .await;
+
+            if let Some(result) = wasm_result {
+                loaded_wasm_channel_names = result.channel_names;
+                wasm_channel_runtime_state = Some((
+                    result.wasm_channel_runtime,
+                    result.pairing_store,
+                    result.wasm_channel_router,
+                ));
+                for (name, channel) in result.channels {
+                    channel_names.push(name);
+                    channels.add(channel).await;
+                }
+                if let Some(routes) = result.webhook_routes {
+                    webhook_routes.push(routes);
+                }
+            }
+        }
+
+        // Add Signal channel if configured and not CLI-only mode.
+        if !cli.cli_only
+            && let Some(ref signal_config) = config.channels.signal
+        {
+            let signal_channel = SignalChannel::new(signal_config.clone())?;
+            channel_names.push("signal".to_string());
+            channels.add(Box::new(signal_channel)).await;
+            let safe_url = SignalChannel::redact_url(&signal_config.http_url);
+            tracing::debug!(
+                url = %safe_url,
+                "Signal channel enabled"
+            );
+            if signal_config.allow_from.is_empty() {
+                tracing::warn!(
+                    "Signal channel has empty allow_from list - ALL messages will be DENIED."
+                );
+            }
+        }
+
+        // Add HTTP channel if configured and not CLI-only mode.
+        if !cli.cli_only
+            && let Some(ref http_config) = config.channels.http
+        {
+            let http_channel = HttpChannel::new(http_config.clone());
+            #[cfg(unix)]
+            {
+                http_channel_state = Some(http_channel.shared_state());
+            }
+            webhook_routes.push(http_channel.routes());
+            let (host, port) = http_channel.addr();
+            webhook_server_addr = Some(
+                format!("{}:{}", host, port)
+                    .parse()
+                    .expect("HttpConfig host:port must be a valid SocketAddr"),
+            );
+            channel_names.push("http".to_string());
+            channels.add(Box::new(http_channel)).await;
+            tracing::debug!(
+                "HTTP channel enabled on {}:{}",
+                http_config.host,
+                http_config.port
+            );
+        }
     }
 
     // Start the unified webhook server if any routes were registered.
@@ -591,7 +628,9 @@ async fn async_main() -> anyhow::Result<()> {
 
     let mut gateway_url: Option<String> = None;
     let mut sse_manager: Option<std::sync::Arc<ironclaw::channels::web::sse::SseManager>> = None;
-    if let Some(ref gw_config) = config.channels.gateway {
+    if !cli.is_ndjson_mode()
+        && let Some(ref gw_config) = config.channels.gateway
+    {
         let mut gw = GatewayChannel::new(gw_config.clone(), config.owner_id.clone());
         gw = gw.with_llm_provider(Arc::clone(&components.llm));
         if let Some(ref ws) = components.workspace {
@@ -773,7 +812,7 @@ async fn async_main() -> anyhow::Result<()> {
         .as_ref()
         .map(|c| c.model_name().to_string());
 
-    if config.channels.cli.enabled && cli.message.is_none() {
+    if config.channels.cli.enabled && cli.message.is_none() && !cli.is_ndjson_mode() {
         let boot_info = ironclaw::boot_screen::BootInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
             agent_name: config.agent.name.clone(),

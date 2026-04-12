@@ -410,25 +410,62 @@ impl Agent {
                 let pct = self.context_monitor.usage_percent(&messages);
                 tracing::info!("Context at {:.1}% capacity, auto-compacting", pct);
 
-                // Notify the user that compaction is happening
+                let strategy_name = match strategy {
+                    crate::agent::context_monitor::CompactionStrategy::Summarize { .. } => {
+                        "summarize"
+                    }
+                    crate::agent::context_monitor::CompactionStrategy::Truncate { .. } => {
+                        "truncate"
+                    }
+                    crate::agent::context_monitor::CompactionStrategy::MoveToWorkspace => {
+                        "workspace"
+                    }
+                };
+
                 let _ = self
                     .channels
                     .send_status(
                         &message.channel,
-                        StatusUpdate::Status(format!(
-                            "Context at {:.0}% capacity, compacting...",
-                            pct
-                        )),
+                        StatusUpdate::CompactionStarted {
+                            strategy: strategy_name.into(),
+                            trigger: "auto".into(),
+                            usage_percent: pct as f32,
+                        },
                         &message.metadata,
                     )
                     .await;
 
                 let compactor = ContextCompactor::new(self.llm().clone());
-                if let Err(e) = compactor
+                match compactor
                     .compact(thread, strategy, self.workspace().map(|w| w.as_ref()))
                     .await
                 {
-                    tracing::warn!("Auto-compaction failed: {}", e);
+                    Ok(result) => {
+                        let _ = self
+                            .channels
+                            .send_status(
+                                &message.channel,
+                                StatusUpdate::CompactionCompleted {
+                                    turns_removed: result.turns_removed,
+                                    tokens_before: result.tokens_before,
+                                    tokens_after: result.tokens_after,
+                                    summary_written: result.summary_written,
+                                },
+                                &message.metadata,
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Auto-compaction failed: {}", e);
+                        let _ = self
+                            .channels
+                            .send_status(
+                                &message.channel,
+                                StatusUpdate::Status(format!("Compaction failed: {}", e)),
+                                &message.metadata,
+                            )
+                            .await;
+                    }
                 }
             }
         }
@@ -967,12 +1004,53 @@ impl Agent {
                 crate::agent::context_monitor::CompactionStrategy::Summarize { keep_recent: 5 },
             );
 
+        let strategy_name = match strategy {
+            crate::agent::context_monitor::CompactionStrategy::Summarize { .. } => "summarize",
+            crate::agent::context_monitor::CompactionStrategy::Truncate { .. } => "truncate",
+            crate::agent::context_monitor::CompactionStrategy::MoveToWorkspace => "workspace",
+        };
+
+        // Capture routing info before borrowing `thread` mutably for compaction.
+        let status_channel = thread.source_channel.clone();
+        let status_metadata = thread.metadata.clone();
+
+        if let Some(channel_name) = status_channel.as_deref() {
+            let _ = self
+                .channels
+                .send_status(
+                    channel_name,
+                    StatusUpdate::CompactionStarted {
+                        strategy: strategy_name.into(),
+                        trigger: "manual".into(),
+                        usage_percent: usage as f32,
+                    },
+                    &status_metadata,
+                )
+                .await;
+        }
+
         let compactor = ContextCompactor::new(self.llm().clone());
         match compactor
             .compact(thread, strategy, self.workspace().map(|w| w.as_ref()))
             .await
         {
             Ok(result) => {
+                if let Some(channel_name) = status_channel.as_deref() {
+                    let _ = self
+                        .channels
+                        .send_status(
+                            channel_name,
+                            StatusUpdate::CompactionCompleted {
+                                turns_removed: result.turns_removed,
+                                tokens_before: result.tokens_before,
+                                tokens_after: result.tokens_after,
+                                summary_written: result.summary_written,
+                            },
+                            &status_metadata,
+                        )
+                        .await;
+                }
+
                 let mut msg = format!(
                     "Compacted: {} turns removed, {} → {} tokens (was {:.1}% full)",
                     result.turns_removed, result.tokens_before, result.tokens_after, usage
@@ -982,7 +1060,19 @@ impl Agent {
                 }
                 Ok(SubmissionResult::ok_with_message(msg))
             }
-            Err(e) => Ok(SubmissionResult::error(format!("Compaction failed: {}", e))),
+            Err(e) => {
+                if let Some(channel_name) = status_channel.as_deref() {
+                    let _ = self
+                        .channels
+                        .send_status(
+                            channel_name,
+                            StatusUpdate::Status(format!("Compaction failed: {}", e)),
+                            &status_metadata,
+                        )
+                        .await;
+                }
+                Ok(SubmissionResult::error(format!("Compaction failed: {}", e)))
+            }
         }
     }
 

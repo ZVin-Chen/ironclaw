@@ -139,6 +139,11 @@ pub enum ChannelError {
 
     #[error("Channel health check failed: {name}")]
     HealthCheckFailed { name: String },
+
+    /// Generic error with a free-form message. Prefer the more specific
+    /// variants when they fit; use `Other` only when none apply.
+    #[error("{0}")]
+    Other(String),
 }
 
 // LlmError lives in src/llm/error.rs; re-exported here for backward compatibility.

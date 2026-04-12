@@ -3893,6 +3893,10 @@ fn status_to_wit(
         StatusUpdate::Suggestions { .. }
         | StatusUpdate::TurnCost { .. }
         | StatusUpdate::SkillActivated { .. } => return None,
+        // Compaction events are handled structurally in NDJSON / REPL; skip for WASM channels.
+        StatusUpdate::CompactionStarted { .. } | StatusUpdate::CompactionCompleted { .. } => {
+            return None;
+        }
         StatusUpdate::ReasoningUpdate {
             narrative,
             decisions,
