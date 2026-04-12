@@ -77,6 +77,45 @@ struct TurnUsage {
     num_turns: u32,
 }
 
+/// Write a single NDJSON line to stdout. Thread-safe via the provided lock.
+fn write_ndjson_line(
+    lock: &std::sync::Mutex<()>,
+    compat_mode: CompatMode,
+    event: &NdjsonOutput,
+) {
+    let value = match compat_mode {
+        CompatMode::Ironclaw => match serde_json::to_value(event) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!("ndjson serialize error: {}", e);
+                return;
+            }
+        },
+        CompatMode::ClaudeCode => to_claude_code(event),
+    };
+
+    if value.is_null() {
+        return;
+    }
+
+    let line = match serde_json::to_string(&value) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!("ndjson serialize error: {}", e);
+            return;
+        }
+    };
+
+    let Ok(_guard) = lock.lock() else {
+        return;
+    };
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    if writeln!(handle, "{line}").is_ok() {
+        let _ = handle.flush();
+    }
+}
+
 impl NdjsonChannel {
     pub fn new(config: NdjsonChannelConfig, database: Option<Arc<dyn Database>>) -> Self {
         Self {
@@ -99,40 +138,9 @@ impl NdjsonChannel {
             .map(|db| db as &dyn ConversationStore)
     }
 
-    /// Write one NDJSON line to stdout. Serializes with a locked guard to
-    /// prevent interleaved writes when multiple async tasks emit concurrently.
+    /// Write one NDJSON line to stdout, delegating to [`write_ndjson_line`].
     fn emit(&self, event: &NdjsonOutput) {
-        let value = match self.config.compat_mode {
-            CompatMode::Ironclaw => match serde_json::to_value(event) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::debug!("ndjson serialize error: {}", e);
-                    return;
-                }
-            },
-            CompatMode::ClaudeCode => to_claude_code(event),
-        };
-
-        if value.is_null() {
-            return;
-        }
-
-        let line = match serde_json::to_string(&value) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!("ndjson serialize error: {}", e);
-                return;
-            }
-        };
-
-        let Ok(_guard) = self.stdout_lock.lock() else {
-            return;
-        };
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        if writeln!(handle, "{line}").is_ok() {
-            let _ = handle.flush();
-        }
+        write_ndjson_line(&self.stdout_lock, self.config.compat_mode, event);
     }
 
     async fn current_session_id(&self) -> String {
@@ -207,31 +215,11 @@ impl Channel for NdjsonChannel {
                     tx_for_reader,
                     user_policy,
                     move |line, reason| {
-                        // Emit error event on stdout.
                         let err = NdjsonOutput::Error {
                             session_id: "pending".into(),
                             message: format!("parse error: {} ({})", reason, line),
                         };
-                        let val = match compat_mode {
-                            CompatMode::Ironclaw => {
-                                serde_json::to_value(&err).unwrap_or(serde_json::Value::Null)
-                            }
-                            CompatMode::ClaudeCode => to_claude_code(&err),
-                        };
-                        if val.is_null() {
-                            return;
-                        }
-                        let line_out = match serde_json::to_string(&val) {
-                            Ok(s) => s,
-                            Err(_) => return,
-                        };
-                        let Ok(_guard) = stdout_lock.lock() else {
-                            return;
-                        };
-                        let stdout = std::io::stdout();
-                        let mut handle = stdout.lock();
-                        let _ = writeln!(handle, "{line_out}");
-                        let _ = handle.flush();
+                        write_ndjson_line(&stdout_lock, compat_mode, &err);
                     },
                 )
                 .await;
@@ -466,6 +454,9 @@ impl Channel for NdjsonChannel {
                     skill_names,
                 }));
             }
+            // TurnCost carries *cumulative* token counts from the agent loop,
+            // so we overwrite (the last event has the session total). `num_turns`
+            // is counted locally — one increment per TurnCost event.
             StatusUpdate::TurnCost {
                 input_tokens,
                 output_tokens,
