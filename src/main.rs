@@ -293,8 +293,8 @@ async fn async_main() -> anyhow::Result<()> {
     if !cli.no_onboard
         && let Some(reason) = ironclaw::setup::check_onboard_needed()
     {
-        println!("Onboarding needed: {}", reason);
-        println!();
+        eprintln!("Onboarding needed: {}", reason);
+        eprintln!();
         let mut wizard = SetupWizard::try_with_config_and_toml(
             SetupConfig {
                 quick: true,
