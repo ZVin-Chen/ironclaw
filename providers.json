@@ -427,6 +427,26 @@
     }
   },
   {
+    "id": "zai_anthropic",
+    "aliases": [
+      "zai-anthropic"
+    ],
+    "protocol": "anthropic",
+    "default_base_url": "https://api.z.ai/api/anthropic",
+    "api_key_env": "LLM_API_KEY",
+    "api_key_required": true,
+    "model_env": "LLM_MODEL",
+    "default_model": "glm-5",
+    "description": "Z.AI GLM via Anthropic-compatible API",
+    "setup": {
+      "kind": "api_key",
+      "secret_name": "llm_zai_anthropic_api_key",
+      "key_url": "https://z.ai/manage-apikey/apikey-list",
+      "display_name": "Z.AI GLM (Anthropic)",
+      "can_list_models": false
+    }
+  },
+  {
     "id": "cloudflare",
     "aliases": [
       "cloudflare_ai",
