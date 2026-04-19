@@ -217,6 +217,23 @@ SKILL.md files extend the agent's prompt with domain-specific instructions. See 
 - **Selection pipeline**: gating (check bin/env/config requirements) -> scoring (keywords/patterns/tags) -> budget (fit within `SKILLS_MAX_TOKENS`) -> attenuation (trust-based tool ceiling)
 - **Skill tools**: `skill_list`, `skill_search`, `skill_install`, `skill_remove`
 
+### create-test-env
+
+Creates isolated IronClaw test environments. Each gets its own base directory (`~/.ironclaw-{name}`), `.env`, PostgreSQL database, and ports — fully independent from the main instance. See `skills/create-test-env/SKILL.md` for full steps.
+
+Quick reference:
+1. Sanitize env name (lowercase, hyphens, max 32 chars)
+2. Check `~/.ironclaw-{name}` for conflicts
+3. Scan existing envs' ports — allocate free gateway (base 3000) + HTTP (base 8080)
+4. Inherit LLM config from `~/.ironclaw/.env`
+5. Parse `DATABASE_URL` for PostgreSQL connection params
+6. Create `~/.ironclaw-{name}/` + `.env` (DATABASE_BACKEND=postgres, ONBOARD_COMPLETED=true, HEARTBEAT_ENABLED=false, SANDBOX_ENABLED=false)
+7. `createdb ironclaw_{name}` + enable pgvector
+8. Verify + print summary
+
+Start: `IRONCLAW_BASE_DIR=~/.ironclaw-{name} ironclaw run`
+Teardown: `rm -rf ~/.ironclaw-{name}` + `dropdb ironclaw_{name}`
+
 ## Configuration
 
 See `.env.example` for all environment variables. LLM backends (`nearai`, `openai`, `anthropic`, `ollama`, `openai_compatible`, `tinfoil`, `bedrock`) documented in `src/llm/CLAUDE.md`.
