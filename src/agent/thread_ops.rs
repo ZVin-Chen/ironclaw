@@ -116,21 +116,38 @@ impl Agent {
                     return Some(FORGED_THREAD_ID_ERROR.to_string());
                 }
 
-                tracing::warn!(
-                    user = %message.user_id,
-                    thread_id = %thread_uuid,
-                    exists,
-                    "Skipped hydration for thread id not owned by sender"
-                );
-                return None;
+                // Conversation UUID doesn't exist in DB — this is a new
+                // conversation scoped by the caller (e.g. NDJSON channel).
+                // Fall through to create the in-memory thread with the caller's
+                // UUID so `resolve_thread` adopts it instead of minting a new
+                // one.  Without this, the DB stores messages under a different
+                // UUID than what the caller expects, breaking session resume.
+                if !exists {
+                    tracing::debug!(
+                        user = %message.user_id,
+                        thread_id = %thread_uuid,
+                        channel = %message.channel,
+                        "Adopting new conversation UUID from caller"
+                    );
+                    msg_count = 0;
+                    // Skip DB history loading — proceed to thread creation below.
+                } else {
+                    tracing::warn!(
+                        user = %message.user_id,
+                        thread_id = %thread_uuid,
+                        exists,
+                        "Skipped hydration for thread id not owned by sender"
+                    );
+                    return None;
+                }
+            } else {
+                let db_messages = store
+                    .list_conversation_messages(thread_uuid)
+                    .await
+                    .unwrap_or_default();
+                msg_count = db_messages.len();
+                chat_messages = rebuild_chat_messages_from_db(&db_messages);
             }
-
-            let db_messages = store
-                .list_conversation_messages(thread_uuid)
-                .await
-                .unwrap_or_default();
-            msg_count = db_messages.len();
-            chat_messages = rebuild_chat_messages_from_db(&db_messages);
         } else {
             msg_count = 0;
         }
@@ -144,32 +161,41 @@ impl Agent {
         // source_channel = None.  `is_approval_authorized(None, _)` returns
         // false, so approvals are denied until the conversation is backfilled
         // with a source_channel via an explicit migration or re-creation.
-        let db_source_channel = if let Some(store) = self.store() {
-            match store.get_conversation_source_channel(thread_uuid).await {
-                Ok(sc) => {
-                    if sc.is_none() {
-                        tracing::warn!(
-                            thread_id = %thread_uuid,
-                            "Legacy thread has no stored source_channel; \
-                             cross-channel approvals will be denied (fail-closed)"
-                        );
+        //
+        // For brand-new conversations (msg_count == 0 and no DB row), use the
+        // requesting message's channel as source_channel.
+        let effective_source_channel = if msg_count > 0 {
+            match self.store() {
+                Some(store) => {
+                    match store.get_conversation_source_channel(thread_uuid).await {
+                        Ok(sc) => {
+                            if sc.is_none() {
+                                tracing::warn!(
+                                    thread_id = %thread_uuid,
+                                    "Legacy thread has no stored source_channel; \
+                                     cross-channel approvals will be denied (fail-closed)"
+                                );
+                            }
+                            sc
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                thread_id = %thread_uuid,
+                                error = %e,
+                                "Failed to read source_channel from DB; \
+                                 cross-channel approvals will be denied (fail-closed)"
+                            );
+                            None
+                        }
                     }
-                    sc
                 }
-                Err(e) => {
-                    tracing::error!(
-                        thread_id = %thread_uuid,
-                        error = %e,
-                        "Failed to read source_channel from DB; \
-                         cross-channel approvals will be denied (fail-closed)"
-                    );
-                    None
-                }
+                None => None,
             }
         } else {
-            None
+            // New conversation — use the requesting channel.
+            Some(message.channel.to_string())
         };
-        let effective_source_channel = db_source_channel.as_deref();
+        let effective_source_channel = effective_source_channel.as_deref();
 
         let session_id = {
             let sess = session.lock().await;
